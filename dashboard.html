@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+<title>Jadwal Kerja Harian – Backup & Export</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+
+<style>
+*{box-sizing:border-box;user-select:none;}
+html,body{margin:0;padding:0;font-family:'Roboto',sans-serif;background:#e0f7fa;}
+body{display:flex;justify-content:center;align-items:flex-start;min-height:100vh;}
+.app{width:100%;max-width:600px;padding:15px;display:flex;flex-direction:column;gap:20px;}
+.header{text-align:center;}
+h1{margin:0;font-size:28px;font-weight:700;color:#0d47a1;}
+p{font-size:14px;color:#546e7a;}
+.card{background:rgba(255,255,255,0.95);padding:15px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.2);}
+input,select,button{width:100%;padding:10px;border-radius:6px;border:1px solid #b2dfdb;font-size:14px;}
+button{border:none;color:white;font-weight:600;cursor:pointer;margin-top:5px;}
+.btnMasuk{background:#4caf50;}
+.btnTidakMasuk{background:#f44336;}
+.btnLibur{background:#ff9800;}
+.btnModeHapus{background:#00897b;}
+.btnBatal{background:#9e9e9e;}
+.btnEkspor{background:#1976d2;}
+table{width:100%;border-collapse:collapse;font-size:14px;}
+th,td{border:1px solid #b2dfdb;padding:6px;text-align:center;}
+th{background:#80deea;color:#004d40;}
+.statusMasuk{background:#c8e6c9;}
+.statusTidak{background:#ffcdd2;}
+.statusLibur{background:#ffe0b2;}
+.summary{margin-top:12px;font-weight:600;color:#0d47a1;}
+
+.modal{
+display:none;
+position:fixed;
+inset:0;
+background:rgba(0,0,0,0.5);
+justify-content:center;
+align-items:center;
+z-index:100;
+}
+
+.modal-content{
+background:white;
+border-radius:12px;
+padding:15px;
+width:90%;
+max-width:700px;
+max-height:80vh;
+overflow:auto;
+}
+
+#toast{
+position:fixed;
+top:20px;
+left:50%;
+transform:translateX(-50%);
+padding:12px 20px;
+border-radius:8px;
+color:white;
+display:none;
+z-index:999;
+}
+</style>
+</head>
+
+<body>
+
+<div class="app">
+
+<div class="header">
+  <h1>Jadwal Kerja Harian</h1>
+  <p>Pencatatan Kehadiran Shift & Backup</p>
+</div>
+
+<div class="card">
+  <input type="date" id="tglInput">
+
+  <select id="shiftInput">
+    <option>Shift 1 (00:00-08:00)</option>
+    <option>Shift 2 (08:00-16:00)</option>
+    <option>Shift 3 (16:00-00:00)</option>
+    <option>Day Off / No Planned</option>
+  </select>
+
+  <button class="btnMasuk" id="btnMasuk">Masuk</button>
+  <button class="btnTidakMasuk" id="btnTidakMasuk">Tidak Masuk</button>
+  <button class="btnLibur" id="btnLibur">Libur</button>
+</div>
+
+<div class="card">
+
+<table>
+<thead>
+<tr>
+  <th>Tanggal</th>
+  <th>Shift</th>
+  <th>Status</th>
+</tr>
+</thead>
+<tbody id="tableBody"></tbody>
+</table>
+
+<div class="summary" id="summaryText"></div>
+
+<button id="btnModeHapus" class="btnModeHapus">Pilih & Hapus</button>
+<button id="btnBatal" class="btnBatal" style="display:none;">Batal</button>
+<button id="btnEkspor" class="btnEkspor">Ekspor CSV</button>
+<button id="btnLihatArsip" class="btnModeHapus">Lihat Arsip 15 Hari</button>
+
+</div>
+</div>
+
+<div class="modal" id="modalArsip">
+  <div class="modal-content">
+    <h3>Arsip 15 Hari</h3>
+    <div id="arsipContent"></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script type="module">
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+
+const supabase = createClient(
+'https://utqitfrtfywdfizlbrdf.supabase.co',
+'sb_publishable_ObAPMsINwyKjSwqxpbK3FQ_on2dgOJv'
+);
+
+// USER ID
+const params = new URLSearchParams(window.location.search);
+const userId = params.get("user_id");
+
+if(!userId){
+  window.location.href = "login.html";
+}
+
+// ELEMENT
+const tglInput = document.getElementById('tglInput');
+const shiftInput = document.getElementById('shiftInput');
+const tableBody = document.getElementById('tableBody');
+const summaryText = document.getElementById('summaryText');
+
+const toast = document.getElementById('toast');
+
+let records = [];
+let modeHapus = false;
+
+// AUTO DATE
+function getDate(){
+  const d = new Date();
+  return d.toISOString().split('T')[0];
+}
+
+function updateDate(){
+  const today = getDate();
+  tglInput.max = today;
+  if(!tglInput.value || tglInput.value < today){
+    tglInput.value = today;
+  }
+}
+
+// TOAST
+function show(msg,color="#2196f3"){
+  toast.textContent = msg;
+  toast.style.background = color;
+  toast.style.display = "block";
+  setTimeout(()=>toast.style.display="none",2000);
+}
+
+// LOAD
+async function load(){
+  const { data } = await supabase
+    .from('attendance')
+    .select('*')
+    .eq('user_id', userId)
+    .order('tgl',{ascending:true});
+
+  records = data || [];
+  render();
+}
+
+// ADD
+async function add(status){
+  const tgl = tglInput.value;
+  const shift = shiftInput.value;
+
+  const exist = records.some(r => r.tgl===tgl && r.shift===shift);
+  if(exist) return show("Sudah dicatat","#ff9800");
+
+  const { data, error } = await supabase
+    .from('attendance')
+    .insert([{ user_id:userId, tgl, shift, status }])
+    .select();
+
+  if(error) return show("Gagal simpan","#f44336");
+
+  records.push(data[0]);
+  render();
+  show("Tersimpan","#4caf50");
+}
+
+// RENDER
+function render(){
+  tableBody.innerHTML = "";
+
+  let m=0,t=0,l=0;
+
+  records.forEach(r=>{
+    let cls="statusLibur";
+    if(r.status==="Masuk"){cls="statusMasuk";m++}
+    if(r.status==="Tidak Masuk"){cls="statusTidak";t++}
+    if(r.status==="Libur"){l++}
+
+    tableBody.innerHTML += `
+      <tr>
+        <td>${r.tgl}</td>
+        <td>${r.shift}</td>
+        <td class="${cls}">${r.status}</td>
+      </tr>
+    `;
+  });
+
+  summaryText.textContent = `Masuk: ${m} | Tidak: ${t} | Libur: ${l}`;
+}
+
+// EVENTS
+btnMasuk.onclick = ()=>add("Masuk");
+btnTidakMasuk.onclick = ()=>add("Tidak Masuk");
+btnLibur.onclick = ()=>add("Libur");
+
+// INIT
+window.onload = ()=>{
+  updateDate();
+  load();
+};
+</script>
+
+</body>
+</html>
